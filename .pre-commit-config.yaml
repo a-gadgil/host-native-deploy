@@ -74,7 +74,7 @@ repos:
         name: Format C++ code (clang-format)
         entry: clang-format -i
         language: system
-        files: '^cpp-service/.*\.(cpp|cc|cxx|hpp|h)$'
+        files: '^cpp-service/src/.*\.(cpp|cc|cxx|hpp|h)$'
 
   # 7. Hardcoded Secret Scanner
   - repo: https://github.com/gitleaks/gitleaks

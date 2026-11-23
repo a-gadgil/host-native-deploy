@@ -47,3 +47,4 @@ dist/
 **/*.tar.gz
 **/*.sha256
 **/.env
+cpp-service/build/
