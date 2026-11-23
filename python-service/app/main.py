@@ -11,7 +11,9 @@ REDIS_ADDR = os.getenv("REDIS_ADDR", "127.0.0.1:6379")
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 
 redis_host, redis_port = REDIS_ADDR.split(":")
-rdb = redis.Redis(host=redis_host, port=int(redis_port), decode_responses=True, socket_timeout=2)
+rdb = redis.Redis(
+    host=redis_host, port=int(redis_port), decode_responses=True, socket_timeout=2
+)
 
 
 @asynccontextmanager
@@ -32,10 +34,9 @@ def healthz():
 def readyz():
     try:
         rdb.ping()
-        with psycopg.connect(DB_DSN, connect_timeout=2) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1;")
-    except Exception as exc:
+        with psycopg.connect(DB_DSN, connect_timeout=2) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1;")
+    except (psycopg.Error, redis.RedisError, OSError) as exc:
         raise HTTPException(status_code=503, detail=f"not ready: {exc}")
     return {"status": "ready"}
 
@@ -51,10 +52,9 @@ def list_items(response: Response):
     except redis.RedisError:
         pass
 
-    with psycopg.connect(DB_DSN, connect_timeout=3) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name FROM items ORDER BY id;")
-            rows = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
+    with psycopg.connect(DB_DSN, connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, name FROM items ORDER BY id;")
+        rows = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
 
     try:
         rdb.setex(cache_key, CACHE_TTL, json.dumps(rows))

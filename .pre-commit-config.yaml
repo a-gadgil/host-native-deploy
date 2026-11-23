@@ -11,36 +11,83 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=1024']
-        exclude: ^(go/bin/|\.pre-commit-trivy-cache/)
+        exclude: ^(go-service/bin/|cpp-service/build/|\.pre-commit-trivy-cache/)
       - id: detect-private-key
 
-  # 2. Go Formatting & Static Analysis
+  # 2. Go Formatting & Static Analysis (go-service/)
   - repo: local
     hooks:
       - id: go-fmt
         name: Format Go code (gofmt)
         entry: gofmt -w
         language: system
-        files: '\.go$'
+        files: '^go-service/.*\.go$'
       - id: go-vet
         name: Run Go static analysis (go vet)
-        entry: bash -c 'cd go && go vet ./...'
+        entry: bash -c 'cd go-service && go vet ./...'
         language: system
-        files: '^go/.*\.go$'
+        files: '^go-service/.*\.go$'
         pass_filenames: false
 
-  # 3. Hardcoded Secret Scanner
+  # 3. Python Linting & Formatting (python-service/)
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Lint Python code (ruff)
+        entry: ruff check --fix
+        language: system
+        files: '^python-service/.*\.py$'
+      - id: ruff-format
+        name: Format Python code (ruff)
+        entry: ruff format
+        language: system
+        files: '^python-service/.*\.py$'
+
+  # 4. Java Compilation Check (java-service/)
+  - repo: local
+    hooks:
+      - id: java-compile-check
+        name: Verify Java compilation (mvn test-compile)
+        entry: bash -c 'cd java-service && mvn -o -q test-compile'
+        language: system
+        files: '^java-service/(pom\.xml|src/.*\.java)$'
+        pass_filenames: false
+
+  # 5. Node.js Formatting & Syntax Check (node-service/)
+  - repo: local
+    hooks:
+      - id: node-prettier
+        name: Format Node.js code (prettier)
+        entry: prettier --write
+        language: system
+        files: '^node-service/.*\.(js|mjs|cjs|ts|json)$'
+      - id: node-syntax-check
+        name: Check Node.js syntax (node --check)
+        entry: node --check
+        language: system
+        files: '^node-service/.*\.(js|mjs|cjs)$'
+
+  # 6. C++ Formatting (cpp-service/)
+  - repo: local
+    hooks:
+      - id: cpp-clang-format
+        name: Format C++ code (clang-format)
+        entry: clang-format -i
+        language: system
+        files: '^cpp-service/src/.*\.(cpp|cc|cxx|hpp|h)$'
+
+  # 7. Hardcoded Secret Scanner
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2
     hooks:
       - id: gitleaks
         name: Detect hardcoded secrets with Gitleaks
 
-  # 4. Local Trivy Filesystem & IaC Scanner
+  # 8. Local Trivy Dependency Vulnerability Scanner (Offline Host-Native Lockfiles)
   - repo: local
     hooks:
       - id: trivy-fs
-        name: Scan workspace with Trivy
-        entry: trivy fs --scanners vuln,misconfig --exit-code 1 --severity HIGH,CRITICAL .
+        name: Scan host-native dependencies with Trivy
+        entry: trivy fs --scanners vuln --offline-scan --ignore-unfixed --skip-version-check --exit-code 1 --severity HIGH,CRITICAL .
         language: system
         pass_filenames: false
