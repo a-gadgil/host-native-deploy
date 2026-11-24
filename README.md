@@ -1,4 +1,4 @@
-# containerless-polyglot-deployments
+# host-native-deploy
 
 A production-grade reference repository demonstrating continuous integration (CI) and deployment (CD) pipelines for **non-containerized, host-native workloads**.
 
