@@ -46,7 +46,7 @@ publish-cpp:
 # ==================== GO SERVICE ====================
 build-go:
   stage: build
-  image: golang:1.22
+  image: golang:1.27
   rules:
     - changes:
         - go-service/**/*

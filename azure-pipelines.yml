@@ -78,7 +78,7 @@ stages:
         steps:
           - task: GoTool@0
             inputs:
-              version: '1.22.0'
+              version: '1.27.1'
           - bash: |
               mkdir -p $(Build.ArtifactStagingDirectory)/go
               cd go-service
