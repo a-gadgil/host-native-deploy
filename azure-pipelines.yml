@@ -1,0 +1,145 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - cpp-service/*
+      - go-service/*
+      - java-service/*
+      - python-service/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # Produces clean versions like 1.0.42
+  appVersion: '1.0.$(Build.BuildId)'
+  artifactFeed: 'host-native-feed'
+
+stages:
+  # Stage 1: Detect which service directories changed in this push
+  - stage: DetectChanges
+    displayName: 'Detect Modified Runtimes'
+    jobs:
+      - job: CheckPaths
+        steps:
+          - checkout: self
+            fetchDepth: 2
+          - bash: |
+              CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+              echo "Changed files:"
+              echo "$CHANGED_FILES"
+
+              for svc in cpp-service go-service java-service python-service; do
+                if echo "$CHANGED_FILES" | grep -q "^${svc}/"; then
+                  echo "##vso[task.setvariable variable=${svc//-/_};isOutput=true]true"
+                  echo "Detected changes in $svc"
+                else
+                  echo "##vso[task.setvariable variable=${svc//-/_};isOutput=true]false"
+                fi
+              done
+            name: setVars
+
+  # Stage 2: Build & Publish changed services in parallel
+  - stage: BuildAndPublish
+    displayName: 'Build & Publish Artifacts'
+    dependsOn: DetectChanges
+    variables:
+      runCpp: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setVars.cpp_service'] ]
+      runGo: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setVars.go_service'] ]
+      runJava: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setVars.java_service'] ]
+      runPython: $[ stageDependencies.DetectChanges.CheckPaths.outputs['setVars.python_service'] ]
+
+    jobs:
+      # ==================== C++ SERVICE ====================
+      - job: CppService
+        condition: eq(variables['runCpp'], 'true')
+        steps:
+          - bash: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/cpp cpp-service/build
+              g++ -O2 -static cpp-service/*.cpp -o cpp-service/build/cpp-service
+              tar -czf $(Build.ArtifactStagingDirectory)/cpp/cpp-service-$(appVersion).tar.gz -C cpp-service/build cpp-service
+            displayName: 'Compile & Bundle C++'
+          - task: UniversalPackages@0
+            displayName: 'Publish C++ to Azure Artifacts'
+            inputs:
+              command: 'publish'
+              publishDirectory: '$(Build.ArtifactStagingDirectory)/cpp'
+              feedsToUsePublish: 'internal'
+              vstsFeedPublish: '$(System.TeamProject)/$(artifactFeed)'
+              vstsFeedPackagePublish: 'cpp-service'
+              versionOption: 'custom'
+              versionPublish: '$(appVersion)'
+
+      # ==================== GO SERVICE ====================
+      - job: GoService
+        condition: eq(variables['runGo'], 'true')
+        steps:
+          - task: GoTool@0
+            inputs:
+              version: '1.27.1'
+          - bash: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/go
+              cd go-service
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o go-service ./cmd/api
+              tar -czf $(Build.ArtifactStagingDirectory)/go/go-service-$(appVersion).tar.gz go-service
+            displayName: 'Compile & Bundle Go'
+          - task: UniversalPackages@0
+            displayName: 'Publish Go to Azure Artifacts'
+            inputs:
+              command: 'publish'
+              publishDirectory: '$(Build.ArtifactStagingDirectory)/go'
+              feedsToUsePublish: 'internal'
+              vstsFeedPublish: '$(System.TeamProject)/$(artifactFeed)'
+              vstsFeedPackagePublish: 'go-service'
+              versionOption: 'custom'
+              versionPublish: '$(appVersion)'
+
+      # ==================== JAVA SERVICE ====================
+      - job: JavaService
+        condition: eq(variables['runJava'], 'true')
+        steps:
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+          - bash: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/java
+              cd java-service
+              mvn clean package -DskipTests
+              tar -czf $(Build.ArtifactStagingDirectory)/java/java-service-$(appVersion).tar.gz -C target $(ls target/*.jar | xargs -n 1 basename)
+            displayName: 'Compile & Bundle Java'
+          - task: UniversalPackages@0
+            displayName: 'Publish Java to Azure Artifacts'
+            inputs:
+              command: 'publish'
+              publishDirectory: '$(Build.ArtifactStagingDirectory)/java'
+              feedsToUsePublish: 'internal'
+              vstsFeedPublish: '$(System.TeamProject)/$(artifactFeed)'
+              vstsFeedPackagePublish: 'java-service'
+              versionOption: 'custom'
+              versionPublish: '$(appVersion)'
+
+      # ==================== PYTHON SERVICE ====================
+      - job: PythonService
+        condition: eq(variables['runPython'], 'true')
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+          - bash: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/python
+              tar --exclude='__pycache__' --exclude='.venv' -czf $(Build.ArtifactStagingDirectory)/python/python-service-$(appVersion).tar.gz -C python-service .
+            displayName: 'Bundle Python'
+          - task: UniversalPackages@0
+            displayName: 'Publish Python to Azure Artifacts'
+            inputs:
+              command: 'publish'
+              publishDirectory: '$(Build.ArtifactStagingDirectory)/python'
+              feedsToUsePublish: 'internal'
+              vstsFeedPublish: '$(System.TeamProject)/$(artifactFeed)'
+              vstsFeedPackagePublish: 'python-service'
+              versionOption: 'custom'
+              versionPublish: '$(appVersion)'

@@ -1,0 +1,121 @@
+stages:
+  - build
+  - publish
+
+variables:
+  # Produces clean, monotonic versions like 1.0.42
+  APP_VERSION: "1.0.${CI_PIPELINE_IID}"
+  REGISTRY_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic"
+
+# Reusable anchor for uploading any service tarball to GitLab Generic Packages
+.publish_template: &publish_template
+  stage: publish
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl --fail --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+        --upload-file "dist/${SERVICE_NAME}-${APP_VERSION}.tar.gz" \
+        "${REGISTRY_URL}/${SERVICE_NAME}/${APP_VERSION}/${SERVICE_NAME}-${APP_VERSION}.tar.gz"
+
+# ==================== C++ SERVICE ====================
+build-cpp:
+  stage: build
+  image: gcc:13
+  rules:
+    - changes:
+        - cpp-service/**/*
+  script:
+    - mkdir -p dist cpp-service/build
+    # Adjust g++ / cmake command to match your exact entrypoint
+    - g++ -O2 -static cpp-service/*.cpp -o cpp-service/build/cpp-service
+    - tar -czf "dist/cpp-service-${APP_VERSION}.tar.gz" -C cpp-service/build cpp-service
+  artifacts:
+    paths:
+      - dist/cpp-service-${APP_VERSION}.tar.gz
+    expire_in: 1 day
+
+publish-cpp:
+  <<: *publish_template
+  variables:
+    SERVICE_NAME: "cpp-service"
+  needs: ["build-cpp"]
+  rules:
+    - changes:
+        - cpp-service/**/*
+
+# ==================== GO SERVICE ====================
+build-go:
+  stage: build
+  image: golang:1.27
+  rules:
+    - changes:
+        - go-service/**/*
+  script:
+    - mkdir -p dist
+    - cd go-service
+    - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o go-service ./cmd/api
+    - tar -czf "../dist/go-service-${APP_VERSION}.tar.gz" go-service
+  artifacts:
+    paths:
+      - dist/go-service-${APP_VERSION}.tar.gz
+    expire_in: 1 day
+
+publish-go:
+  <<: *publish_template
+  variables:
+    SERVICE_NAME: "go-service"
+  needs: ["build-go"]
+  rules:
+    - changes:
+        - go-service/**/*
+
+# ==================== JAVA SERVICE ====================
+build-java:
+  stage: build
+  image: maven:3.9-eclipse-temurin-21
+  rules:
+    - changes:
+        - java-service/**/*
+  script:
+    - mkdir -p dist
+    - cd java-service
+    - mvn clean package -DskipTests
+    - tar -czf "../dist/java-service-${APP_VERSION}.tar.gz" -C target $(ls target/*.jar | xargs -n 1 basename)
+  artifacts:
+    paths:
+      - dist/java-service-${APP_VERSION}.tar.gz
+    expire_in: 1 day
+
+publish-java:
+  <<: *publish_template
+  variables:
+    SERVICE_NAME: "java-service"
+  needs: ["build-java"]
+  rules:
+    - changes:
+        - java-service/**/*
+
+# ==================== PYTHON SERVICE ====================
+build-python:
+  stage: build
+  image: python:3.12-slim
+  rules:
+    - changes:
+        - python-service/**/*
+  script:
+    - mkdir -p dist
+    # Bundle source files and requirements (excluding cache/venv)
+    - tar --exclude='__pycache__' --exclude='.venv' -czf "dist/python-service-${APP_VERSION}.tar.gz" -C python-service .
+  artifacts:
+    paths:
+      - dist/python-service-${APP_VERSION}.tar.gz
+    expire_in: 1 day
+
+publish-python:
+  <<: *publish_template
+  variables:
+    SERVICE_NAME: "python-service"
+  needs: ["build-python"]
+  rules:
+    - changes:
+        - python-service/**/*
