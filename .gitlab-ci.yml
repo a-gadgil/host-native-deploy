@@ -24,11 +24,13 @@ build-cpp:
   rules:
     - changes:
         - cpp-service/**/*
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends cmake
   script:
-    - mkdir -p dist cpp-service/build
-    # Adjust g++ / cmake command to match your exact entrypoint
-    - g++ -O2 -static cpp-service/*.cpp -o cpp-service/build/cpp-service
-    - tar -czf "dist/cpp-service-${APP_VERSION}.tar.gz" -C cpp-service/build cpp-service
+    - mkdir -p dist
+    - cmake -S cpp-service -B cpp-service/build -DCMAKE_BUILD_TYPE=Release
+    - cmake --build cpp-service/build --config Release -j$(nproc)
+    - tar -czf $(Build.ArtifactStagingDirectory)/cpp/cpp-service-$(appVersion).tar.gz -C cpp-service/build cpp-api
   artifacts:
     paths:
       - dist/cpp-service-${APP_VERSION}.tar.gz
@@ -46,7 +48,7 @@ publish-cpp:
 # ==================== GO SERVICE ====================
 build-go:
   stage: build
-  image: golang:1.22
+  image: golang:1.27
   rules:
     - changes:
         - go-service/**/*
