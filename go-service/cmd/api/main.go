@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,130 +16,178 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type Config struct {
+	Port      string
+	DBDSN     string
+	RedisAddr string
+	Version   string
+}
+
 type Item struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
 
+// App encapsulates dependencies instead of relying on package-level globals.
+type App struct {
+	db     *sql.DB
+	rdb    *redis.Client
+	logger *slog.Logger
+	cfg    Config
+}
+
 func main() {
-	port := getEnv("APP_PORT", "8080")
-	dsn := getEnv("DB_DSN", "appuser:apppass@tcp(127.0.0.1:3306)/appdb?parseTime=true")
-	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	cfg := Config{
+		Port:      getEnv("APP_PORT", "8080"),
+		DBDSN:     getEnv("DB_DSN", "appuser:apppass@tcp(127.0.0.1:3306)/appdb?parseTime=true"),
+		RedisAddr: getEnv("REDIS_ADDR", "127.0.0.1:6379"),
+		Version:   getEnv("APP_VERSION", "1.0.0-dev"),
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// 1. MySQL Connection Pool
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("mysql", cfg.DBDSN)
 	if err != nil {
-		log.Fatalf("failed to open db: %v", err)
+		logger.Error("failed to open mysql driver", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
+
 	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
+	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(5 * time.Minute)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		logger.Warn("mysql not reachable at startup", "error", err)
+	}
 
 	// 2. Redis Client
 	rdb := redis.NewClient(&redis.Options{
-		Addr:         redisAddr,
-		DialTimeout:  2 * time.Second,
-		ReadTimeout:  2 * time.Second,
-		WriteTimeout: 2 * time.Second,
+		Addr:         cfg.RedisAddr,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
 	})
 	defer rdb.Close()
 
+	app := &App{
+		db:     db,
+		rdb:    rdb,
+		logger: logger,
+		cfg:    cfg,
+	}
+
+	// 3. HTTP Router (Go 1.22+ method-aware routing)
 	mux := http.NewServeMux()
-
-	// Liveness probe: process is running
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok\n"))
-	})
-
-	// Readiness probe: downstream dependencies (MySQL + Redis) are reachable
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-
-		if err := db.PingContext(ctx); err != nil {
-			http.Error(w, "mysql unreachable", http.StatusServiceUnavailable)
-			return
-		}
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			http.Error(w, "redis unreachable", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready\n"))
-	})
-
-	// Business endpoint: Redis read-through cache -> MySQL fallback
-	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-
-		const cacheKey = "items:all"
-		if cached, err := rdb.Get(ctx, cacheKey).Result(); err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			_, _ = w.Write([]byte(cached))
-			return
-		}
-
-		rows, err := db.QueryContext(ctx, "SELECT id, name FROM items ORDER BY id ASC")
-		if err != nil {
-			http.Error(w, "database query failed", http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-
-		var items []Item
-		for rows.Next() {
-			var it Item
-			if err := rows.Scan(&it.ID, &it.Name); err != nil {
-				http.Error(w, "row scan failed", http.StatusInternalServerError)
-				return
-			}
-			items = append(items, it)
-		}
-
-		payload, _ := json.Marshal(items)
-		_ = rdb.Set(ctx, cacheKey, payload, 30*time.Second).Err()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Cache", "MISS")
-		_, _ = w.Write(payload)
-	})
+	mux.HandleFunc("GET /healthz", app.handleHealth)
+	mux.HandleFunc("GET /items", app.handleListItems)
 
 	srv := &http.Server{
-		Addr:         getEnv("APP_HOST", "127.0.0.1") + ":" + port, // Bind strictly to loopback; Nginx proxies external traffic
+		Addr:         ":" + cfg.Port,
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in goroutine & handle graceful shutdown on SIGTERM/SIGINT
+	// 4. Non-blocking Server Start + Graceful Shutdown
 	go func() {
-		log.Printf("go-api listening on %s", srv.Addr)
+		logger.Info("starting go-service", "port", cfg.Port, "version", cfg.Version)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			logger.Error("server exited unexpectedly", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
+	logger.Info("shutdown signal received, draining connections...")
 
-	log.Println("shutting down gracefully...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("forced shutdown: %v", err)
+		logger.Error("forced shutdown", "error", err)
 	}
-	log.Println("shutdown complete")
+	logger.Info("server stopped cleanly")
+}
+
+func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	dbStatus := "up"
+	if err := a.db.PingContext(ctx); err != nil {
+		dbStatus = "down"
+	}
+
+	redisStatus := "up"
+	if err := a.rdb.Ping(ctx).Err(); err != nil {
+		redisStatus = "down"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"version": a.cfg.Version,
+		"mysql":   dbStatus,
+		"redis":   redisStatus,
+	})
+}
+
+func (a *App) handleListItems(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	// Check Redis cache first
+	if cached, err := a.rdb.Get(ctx, "items:all").Result(); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cache", "HIT")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(cached))
+		return
+	}
+
+	rows, err := a.db.QueryContext(ctx, "SELECT id, name FROM items LIMIT 50")
+	if err != nil {
+		a.logger.Error("query failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database query failed"})
+		return
+	}
+	defer rows.Close()
+
+	items := make([]Item, 0)
+	for rows.Next() {
+		var it Item
+		if err := rows.Scan(&it.ID, &it.Name); err != nil {
+			a.logger.Error("row scan failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to read rows"})
+			return
+		}
+		items = append(items, it)
+	}
+
+	if payload, err := json.Marshal(items); err == nil {
+		_ = a.rdb.Set(ctx, "items:all", payload, 30*time.Second).Err()
+	}
+
+	w.Header().Set("X-Cache", "MISS")
+	writeJSON(w, http.StatusOK, items)
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func getEnv(key, fallback string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
-		return v
+	if val, ok := os.LookupEnv(key); ok && val != "" {
+		return val
 	}
 	return fallback
 }
