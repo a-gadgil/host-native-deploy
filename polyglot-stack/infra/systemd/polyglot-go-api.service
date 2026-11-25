@@ -1,0 +1,26 @@
+[Unit]
+Description=Polyglot Stack - Go Core API & Orchestrator
+After=network-online.target postgresql.service redis-server.service polyglot-python-api.service
+Wants=network-online.target postgresql.service redis-server.service polyglot-python-api.service
+
+[Service]
+Type=simple
+User=polyglot-go
+Group=polyglot-go
+WorkingDirectory=/opt/polyglot-go-api/current
+EnvironmentFile=/etc/polyglot-go-api/go-api.env
+ExecStart=/opt/polyglot-go-api/current/go-api
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
