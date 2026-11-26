@@ -1,0 +1,29 @@
+[Unit]
+Description=Polyglot Java-MySQL Java Compute & Analytics API (Tier 2B)
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target mysql.service redis-server.service
+
+[Service]
+Type=simple
+User=polyglot-java
+Group=polyglot-java
+WorkingDirectory=/opt/polyglot-java-mysql/java-api/current
+EnvironmentFile=/etc/polyglot-java-mysql/java-api.env
+ExecStart=/bin/sh -c 'exec /usr/bin/java $JAVA_OPTS -jar /opt/polyglot-java-mysql/java-api/current/java-api.jar'
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/polyglot-java-mysql/java-api
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

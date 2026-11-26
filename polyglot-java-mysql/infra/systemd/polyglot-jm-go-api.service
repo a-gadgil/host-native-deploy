@@ -1,0 +1,29 @@
+[Unit]
+Description=Polyglot Java-MySQL Go Core API (Tier 2A)
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target mysql.service redis-server.service
+
+[Service]
+Type=simple
+User=polyglot-go
+Group=polyglot-go
+WorkingDirectory=/opt/polyglot-java-mysql/go-api/current
+EnvironmentFile=/etc/polyglot-java-mysql/go-api.env
+ExecStart=/opt/polyglot-java-mysql/go-api/current/go-api
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/opt/polyglot-java-mysql/go-api
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+server:
+  address: ${APP_HOST:127.0.0.1}
+  port: ${APP_PORT:8091}
+  shutdown: graceful
+
+spring:
+  application:
+    name: polyglot-java-api
+  lifecycle:
+    timeout-per-shutdown-phase: 5s
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/polyglot_mysql_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
+    username: ${MYSQL_USER:polyglot_app}
+    password: ${MYSQL_PASSWORD:polyglot_dev_pass}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 2000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      timeout: 1000ms
+
+app:
+  env: ${APP_ENV:host-native}
