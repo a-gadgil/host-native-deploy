@@ -1,0 +1,27 @@
+[Unit]
+Description=Polyglot Go Core Orders API (MariaDB + Redis + Rust RPC)
+After=network-online.target mariadb.service redis-server.service polyglot-rm-rust-api.service
+Wants=network-online.target mariadb.service redis-server.service
+
+[Service]
+Type=simple
+User=polyglot-go
+Group=polyglot-go
+EnvironmentFile=/etc/polyglot-rust-mariadb/go-api.env
+WorkingDirectory=/opt/polyglot-rust-mariadb/go-api/current
+ExecStart=/opt/polyglot-rust-mariadb/go-api/current/go-api
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
