@@ -1,0 +1,27 @@
+[Unit]
+Description=Polyglot Rust Analytics & Risk Scoring API (MariaDB + Redis)
+After=network-online.target mariadb.service redis-server.service
+Wants=network-online.target mariadb.service redis-server.service
+
+[Service]
+Type=simple
+User=polyglot-rust
+Group=polyglot-rust
+EnvironmentFile=/etc/polyglot-rust-mariadb/rust-api.env
+WorkingDirectory=/opt/polyglot-rust-mariadb/rust-api/current
+ExecStart=/opt/polyglot-rust-mariadb/rust-api/current/polyglot-rust-api
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
